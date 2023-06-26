@@ -176,7 +176,6 @@ static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
 	struct stat st;
 	uint8_t *pentry = NULL;
 	uint8_t *pentry_bak = NULL;
-	int rc = -1;
 	uint8_t *attr = NULL;
 	uint8_t *attr_bak = NULL;
 	const char *partName;
@@ -185,7 +184,7 @@ static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
 	for (i = 0; i < ARRAY_SIZE(g_all_ptns); i++) {
 		memset(buf, '\0', sizeof(buf));
 		// Check if A/B versions of this ptn exist
-		rc = snprintf(buf, sizeof(buf) - 1, "%s/%.72s", BOOT_DEV_DIR, g_all_ptns[i]);
+		int rc = snprintf(buf, sizeof(buf) - 1, "%s/%.72s", BOOT_DEV_DIR, g_all_ptns[i]);
 		if (stat(buf, &st) < 0) {
 			// partition does not have _a version
 			continue;
@@ -430,7 +429,7 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 	char slotB[MAX_GPT_NAME_SIZE] = { 0 };
 	char active_guid[TYPE_GUID_SIZE + 1] = { 0 };
 	char inactive_guid[TYPE_GUID_SIZE + 1] = { 0 };
-	int rc, i;
+	int i;
 	// Pointer to the partition entry of current 'A' partition
 	uint8_t *pentryA = NULL;
 	uint8_t *pentryA_bak = NULL;
@@ -455,7 +454,7 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		strncat(slotB, slotA, MAX_GPT_NAME_SIZE - 1);
 		slotB[strlen(slotB) - 1] = 'b';
 
-		rc = snprintf(buf, sizeof(buf) - 1, "%s", BOOT_DEV_DIR);
+		int rc = snprintf(buf, sizeof(buf) - 1, "%s", BOOT_DEV_DIR);
 		snprintf(buf + rc, GPT_PTN_PATH_MAX - rc, "/%s", slotA);
 		LOGD("Checking for partition %s\n", buf);
 		if (stat(buf, &st)) {
@@ -515,7 +514,7 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		// This check *Really* shouldn't be here... But I don't know this codebase
 		// well enough to remove it.
 		if (slot > 1) {
-			fprintf(stderr, "%s: Unknown slot %d!\n", __func__, slot);
+			fprintf(stderr, "%s: Unknown slot %u!\n", __func__, slot);
 			return -1;
 		}
 
@@ -592,7 +591,7 @@ int set_active_boot_slot(unsigned slot)
 		goto out;
 
 	if (chain > BACKUP_BOOT) {
-		fprintf(stderr, "%s: Unknown slot %d!\n", __func__, slot);
+		fprintf(stderr, "%s: Unknown slot %u!\n", __func__, slot);
 		rc = -1;
 		goto out;
 	}
