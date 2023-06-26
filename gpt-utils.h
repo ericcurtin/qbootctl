@@ -83,8 +83,7 @@ extern "C" {
 	"vbmeta_a", "vbmeta_system_a"
 
 static const char g_all_ptns[][MAX_GPT_NAME_SIZE + 1] = {
-	PTN_SWAP_LIST, "boot_a", "system_a",
-	"vendor_a", "modem_a", "system_ext_a", "product_a"
+	"boot_a",
 };
 
 // No more than /dev/sdk
