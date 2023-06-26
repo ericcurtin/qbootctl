@@ -419,17 +419,15 @@ const char *get_suffix(unsigned slot)
 }
 
 
-// The argument here is a vector of partition names(including the slot suffix)
-// that lie on a single disk
-static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
-						   unsigned slot)
+static int boot_ctl_set_active_slot_for_partitions(unsigned slot)
 {
 	char buf[GPT_PTN_PATH_MAX] = { 0 };
 	const char *slotA;
+	struct gpt_disk diskA = { 0 }, diskB = { 0 };
 	char slotB[MAX_GPT_NAME_SIZE] = { 0 };
 	char active_guid[TYPE_GUID_SIZE + 1] = { 0 };
 	char inactive_guid[TYPE_GUID_SIZE + 1] = { 0 };
-	int i;
+	int i, rc = -1;
 	// Pointer to the partition entry of current 'A' partition
 	uint8_t *pentryA = NULL;
 	uint8_t *pentryA_bak = NULL;
@@ -447,20 +445,20 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		int n = strlen(slotA) - strlen(AB_SLOT_A_SUFFIX);
 		if (n + 1 < 3 || n + 1 > MAX_GPT_NAME_SIZE) {
 			fprintf(stderr, "Invalid partition name: %s\n", slotA);
-			return -1;
+			goto out;
 		}
 
 		memset(slotB, 0, sizeof(slotB));
 		strncat(slotB, slotA, MAX_GPT_NAME_SIZE - 1);
 		slotB[strlen(slotB) - 1] = 'b';
 
-		int rc = snprintf(buf, sizeof(buf) - 1, "%s", BOOT_DEV_DIR);
-		snprintf(buf + rc, GPT_PTN_PATH_MAX - rc, "/%s", slotA);
+		n = snprintf(buf, sizeof(buf) - 1, "%s", BOOT_DEV_DIR);
+		snprintf(buf + n, GPT_PTN_PATH_MAX - n, "/%s", slotA);
 		LOGD("Checking for partition %s\n", buf);
 		if (stat(buf, &st)) {
 			if (!strcmp(slotA, "boot_a")) {
 				fprintf(stderr, "Couldn't find required partition %s\n", slotA);
-				return -1;
+				goto out;
 			}
 			// Not every device has every partition
 			continue;
@@ -469,26 +467,28 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		buf[strlen(buf) - 1] = 'b';
 		if (stat(buf, &st)) {
 			fprintf(stderr, "Partition %s does not exist\n", buf);
-			return -1;
+			goto out;
 		}
 
-		// Get the disk containing this partition. This only
-		// actually re-initialises disk if this partition refers
-		// to a different block device than the last one.
-		if (gpt_disk_get_disk_info(slotA, disk) < 0)
-			return -1;
+		// Get the disks containing these partitions.
+		// This only actually re-initialises disk if this partition
+		// refers to a different block device than the last one.
+		if ((gpt_disk_get_disk_info(slotA, &diskA) < 0) ||
+		    (gpt_disk_get_disk_info(slotB, &diskB) < 0)) {
+			goto out;
+		}
 
 		// Get partition entry for slot A & B from the primary
 		// and backup tables.
-		pentryA = gpt_disk_get_pentry(disk, slotA, PRIMARY_GPT);
-		pentryA_bak = gpt_disk_get_pentry(disk, slotA, SECONDARY_GPT);
-		pentryB = gpt_disk_get_pentry(disk, slotB, PRIMARY_GPT);
-		pentryB_bak = gpt_disk_get_pentry(disk, slotB, SECONDARY_GPT);
+		pentryA = gpt_disk_get_pentry(&diskA, slotA, PRIMARY_GPT);
+		pentryA_bak = gpt_disk_get_pentry(&diskA, slotA, SECONDARY_GPT);
+		pentryB = gpt_disk_get_pentry(&diskB, slotB, PRIMARY_GPT);
+		pentryB_bak = gpt_disk_get_pentry(&diskB, slotB, SECONDARY_GPT);
 		if (!pentryA || !pentryA_bak || !pentryB || !pentryB_bak) {
 			// None of these should be NULL since we have already
 			// checked for A & B versions earlier.
 			fprintf(stderr, "Slot pentries for %s not found.\n", slotA);
-			return -1;
+			goto out;
 		}
 		LOGD("\tAB attr (A): 0x%x (backup: 0x%x)\n", *(uint16_t *)(pentryA + AB_FLAG_OFFSET),
 		     *(uint16_t *)(pentryA_bak + AB_FLAG_OFFSET));
@@ -496,17 +496,17 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		     *(uint16_t *)(pentryB_bak + AB_FLAG_OFFSET));
 		memset(active_guid, '\0', sizeof(active_guid));
 		memset(inactive_guid, '\0', sizeof(inactive_guid));
-		if (get_partition_attribute(disk, slotA, ATTR_SLOT_ACTIVE) == 1) {
+		if (get_partition_attribute(&diskA, slotA, ATTR_SLOT_ACTIVE) == 1) {
 			// A is the current active slot
 			memcpy((void *)active_guid, (const void *)pentryA, TYPE_GUID_SIZE);
 			memcpy((void *)inactive_guid, (const void *)pentryB, TYPE_GUID_SIZE);
-		} else if (get_partition_attribute(disk, slotB, ATTR_SLOT_ACTIVE) == 1) {
+		} else if (get_partition_attribute(&diskB, slotB, ATTR_SLOT_ACTIVE) == 1) {
 			// B is the current active slot
 			memcpy((void *)active_guid, (const void *)pentryB, TYPE_GUID_SIZE);
 			memcpy((void *)inactive_guid, (const void *)pentryA, TYPE_GUID_SIZE);
 		} else {
-			fprintf(stderr, "Both A & B are inactive..Aborting");
-			return -1;
+			fprintf(stderr, "Both A & B are inactive... Aborting");
+			goto out;
 		}
 		int a_state = slot == 0 ? SLOT_ACTIVE : SLOT_INACTIVE;
 		int b_state = slot == 1 ? SLOT_ACTIVE : SLOT_INACTIVE;
@@ -515,7 +515,7 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 		// well enough to remove it.
 		if (slot > 1) {
 			fprintf(stderr, "%s: Unknown slot %u!\n", __func__, slot);
-			return -1;
+			goto out;
 		}
 
 		// Mark A as active in primary table
@@ -529,12 +529,22 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
 	}
 
 	// write updated content to disk
-	if (gpt_disk_commit(disk)) {
-		fprintf(stderr, "Failed to commit disk entry");
-		return -1;
+	if (gpt_disk_commit(&diskB)) {
+		fprintf(stderr, "Failed to commit %s entry.", diskB.devpath);
+		goto out;
+	}
+	if (gpt_disk_commit(&diskA)) {
+		fprintf(stderr, "Failed to commit %s entry.", diskA.devpath);
+		goto out;
 	}
 
-	return 0;
+	rc = 0;
+
+out:
+	gpt_disk_free(&diskB);
+	gpt_disk_free(&diskA);
+
+	return rc;
 }
 
 unsigned get_active_boot_slot()
@@ -562,7 +572,6 @@ unsigned get_active_boot_slot()
 int set_active_boot_slot(unsigned slot)
 {
 	enum boot_chain chain = (enum boot_chain)slot;
-	struct gpt_disk disk = { 0 };
 	int rc;
 	bool ismmc;
 
@@ -579,7 +588,7 @@ int set_active_boot_slot(unsigned slot)
 		ufs_bsg_dev_open();
 	}
 
-	rc = boot_ctl_set_active_slot_for_partitions(&disk, slot);
+	rc = boot_ctl_set_active_slot_for_partitions(slot);
 
 	if (rc) {
 		fprintf(stderr, "%s: Failed to set active slot for partitions \n", __func__);
@@ -603,7 +612,6 @@ int set_active_boot_slot(unsigned slot)
 	}
 
 out:
-	gpt_disk_free(&disk);
 	return rc;
 }
 
